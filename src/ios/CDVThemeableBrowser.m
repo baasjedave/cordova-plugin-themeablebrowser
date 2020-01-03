@@ -49,8 +49,12 @@
 #define    kThemeableBrowserPropShowPageTitle @"showPageTitle"
 #define    kThemeableBrowserPropAlign @"align"
 #define    kThemeableBrowserPropTitle @"title"
+#define    kThemeableBrowserPropTitleFontSize @"fontSize"
 #define    kThemeableBrowserPropCancel @"cancel"
 #define    kThemeableBrowserPropItems @"items"
+#define    kThemeableBrowserPropAccessibilityDescription @"accessibilityDescription"
+#define    kThemeableBrowserPropStatusBarStyle @"style"
+#define    kThemeableBrowserPropToolbarPaddingX @"paddingX"
 
 #define    kThemeableBrowserEmitError @"ThemeableBrowserError"
 #define    kThemeableBrowserEmitWarning @"ThemeableBrowserWarning"
@@ -241,13 +245,25 @@
         }
     }
     
+    UIStatusBarStyle statusBarStyle = UIStatusBarStyleDefault;
+    if(browserOptions.statusbar[kThemeableBrowserPropStatusBarStyle]){
+        NSString* style = browserOptions.statusbar[kThemeableBrowserPropStatusBarStyle];
+        if([style isEqualToString:@"lightcontent"]){
+            statusBarStyle = UIStatusBarStyleLightContent;
+        }else if([style isEqualToString:@"darkcontent"]){
+            if (@available(iOS 13.0, *)) {
+                statusBarStyle = UIStatusBarStyleDarkContent;
+            }
+        }
+    }
+    
     if (self.themeableBrowserViewController == nil) {
         NSString* originalUA = [CDVUserAgentUtil originalUserAgent];
         self.themeableBrowserViewController = [[CDVThemeableBrowserViewController alloc]
                                                initWithUserAgent:originalUA prevUserAgent:[self.commandDelegate userAgent]
                                                browserOptions: browserOptions
                                                navigationDelete:self
-                                               statusBarStyle:[UIApplication sharedApplication].statusBarStyle];
+                                               statusBarStyle:statusBarStyle];
         
         if ([self.viewController conformsToProtocol:@protocol(CDVScreenOrientationDelegate)]) {
             self.themeableBrowserViewController.orientationDelegate = (UIViewController <CDVScreenOrientationDelegate>*)self.viewController;
@@ -333,16 +349,26 @@
                                                     initWithRootViewController:self.themeableBrowserViewController];
     nav.orientationDelegate = self.themeableBrowserViewController;
     nav.navigationBarHidden = YES;
+    if (@available(iOS 13.0, *)) {
+        nav.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    }
+    
+    __weak CDVThemeableBrowser* weakSelf = self;
+    
     // Run later to avoid the "took a long time" log message.
     dispatch_async(dispatch_get_main_queue(), ^{
         if (self.themeableBrowserViewController != nil) {
-            CGRect frame = [[UIScreen mainScreen] bounds];
-            UIWindow *tmpWindow = [[UIWindow alloc] initWithFrame:frame];
-            UIViewController *tmpController = [[UIViewController alloc] init];
-            [tmpWindow setRootViewController:tmpController];
-            [tmpWindow setWindowLevel:UIWindowLevelNormal];
+            __strong __typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf->tmpWindow) {
+                CGRect frame = [[UIScreen mainScreen] bounds];
+                strongSelf->tmpWindow = [[UIWindow alloc] initWithFrame:frame];
+            }
             
-            [tmpWindow makeKeyAndVisible];
+            UIViewController *tmpController = [[UIViewController alloc] init];
+            [strongSelf->tmpWindow setRootViewController:tmpController];
+            
+            
+            [strongSelf->tmpWindow makeKeyAndVisible];
             [tmpController presentViewController:nav animated:YES completion:nil];
         }
     });
@@ -564,7 +590,7 @@
             [self.commandDelegate sendPluginResult:pluginResult callbackId:scriptCallbackId];
             return NO;
         }else if ([scriptCallbackId isEqualToString:@"message"] && (self.callbackId != nil)) {
-            // Send a message event            
+            // Send a message event
             NSString* scriptResult = [url path];
             if ((scriptResult != nil) && ([scriptResult length] > 1)) {
                 scriptResult = [scriptResult substringFromIndex:1];
@@ -575,7 +601,7 @@
                     [dResult setValue:@"message" forKey:@"type"];
                     [dResult setObject:decodedResult forKey:@"data"];
                     CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:dResult];
-                    [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];            
+                    [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
                     [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
                 }
             }
@@ -662,6 +688,17 @@
     }
 }
 
+- (UIWindow*)getTmpWindow
+{
+    // Set tmpWindow to hidden to make main webview responsive to touch again
+    // Based on https://stackoverflow.com/questions/4544489/how-to-remove-a-uiwindow
+    return self->tmpWindow;
+}
+
+- (void) nilTmpWindow{
+    self->tmpWindow = nil;
+}
+
 - (void)browserExit
 {
     if (self.callbackId != nil) {
@@ -675,6 +712,8 @@
     // Don't recycle the ViewController since it may be consuming a lot of memory.
     // Also - this is required for the PDF/User-Agent bug work-around.
     self.themeableBrowserViewController = nil;
+    
+    
     self.callbackId = nil;
     self.callbackIdPattern = nil;
     
@@ -806,7 +845,8 @@
     if (toolbarProps[kThemeableBrowserPropImage] || toolbarProps[kThemeableBrowserPropWwwImage]) {
         UIImage *image = [self getImage:toolbarProps[kThemeableBrowserPropImage]
                                 altPath:toolbarProps[kThemeableBrowserPropWwwImage]
-                             altDensity:[toolbarProps[kThemeableBrowserPropWwwImageDensity] doubleValue]];
+                             altDensity:[toolbarProps[kThemeableBrowserPropWwwImageDensity] doubleValue]
+               accessibilityDescription:@""];
         
         if (image) {
             self.toolbar.backgroundColor = [UIColor colorWithPatternImage:image];
@@ -949,7 +989,14 @@
     
     [self layoutButtons];
     
-    self.titleOffset = fmaxf(leftWidth, rightWidth);
+    self.titleOffsetLeft = leftWidth;
+    self.titleOffsetRight = rightWidth;
+    self.toolbarPaddingX = 0;
+    if (_browserOptions.toolbar[kThemeableBrowserPropToolbarPaddingX]) {
+        self.toolbarPaddingX = [_browserOptions.toolbar[kThemeableBrowserPropToolbarPaddingX] floatValue];
+    }
+    
+    
     // The correct positioning of title is not that important right now, since
     // rePositionViews will take care of it a bit later.
     self.titleLabel = nil;
@@ -962,6 +1009,11 @@
         
         if (_browserOptions.title[kThemeableBrowserPropStaticText]) {
             self.titleLabel.text = _browserOptions.title[kThemeableBrowserPropStaticText];
+        }
+        
+        if (_browserOptions.title[kThemeableBrowserPropTitleFontSize]) {
+            CGFloat fontSize = [_browserOptions.title[kThemeableBrowserPropTitleFontSize] floatValue];
+            self.titleLabel.font = [self.titleLabel.font fontWithSize:fontSize];
         }
         
         [self.toolbar addSubview:self.titleLabel];
@@ -984,7 +1036,7 @@
  * bundle, we can't tell what densitiy the image is supposed to be so it needs to be given
  * explicitly.
  */
-- (UIImage*) getImage:(NSString*) name altPath:(NSString*) altPath altDensity:(CGFloat) altDensity
+- (UIImage*) getImage:(NSString*) name altPath:(NSString*) altPath altDensity:(CGFloat) altDensity accessibilityDescription:(NSString*) accessibilityDescription
 {
     UIImage* result = nil;
     if (name) {
@@ -997,6 +1049,8 @@
         }
         NSData* data = [NSData dataWithContentsOfFile:path];
         result = [UIImage imageWithData:data scale:altDensity];
+        result.accessibilityLabel = accessibilityDescription;
+        result.isAccessibilityElement = true;
     }
     
     return result;
@@ -1007,10 +1061,16 @@
     UIButton* result = nil;
     if (buttonProps) {
         UIImage *buttonImage = nil;
+        NSString* accessibilityDescription = description;
+        if(buttonProps[kThemeableBrowserPropAccessibilityDescription]){
+            accessibilityDescription = buttonProps[kThemeableBrowserPropAccessibilityDescription];
+        }
         if (buttonProps[kThemeableBrowserPropImage] || buttonProps[kThemeableBrowserPropWwwImage]) {
             buttonImage = [self getImage:buttonProps[kThemeableBrowserPropImage]
                                  altPath:buttonProps[kThemeableBrowserPropWwwImage]
-                              altDensity:[buttonProps[kThemeableBrowserPropWwwImageDensity] doubleValue]];
+                              altDensity:[buttonProps[kThemeableBrowserPropWwwImageDensity] doubleValue]
+                accessibilityDescription: accessibilityDescription
+                           ];
             
             if (!buttonImage) {
                 [self.navigationDelegate emitError:kThemeableBrowserEmitCodeLoadFail
@@ -1028,7 +1088,9 @@
         if (buttonProps[kThemeableBrowserPropImagePressed] || buttonProps[kThemeableBrowserPropWwwImagePressed]) {
             buttonImagePressed = [self getImage:buttonProps[kThemeableBrowserPropImagePressed]
                                         altPath:buttonProps[kThemeableBrowserPropWwwImagePressed]
-                                     altDensity:[buttonProps[kThemeableBrowserPropWwwImageDensity] doubleValue]];;
+                                     altDensity:[buttonProps[kThemeableBrowserPropWwwImageDensity] doubleValue]
+                       accessibilityDescription: accessibilityDescription
+                                  ];;
             
             if (!buttonImagePressed) {
                 [self.navigationDelegate emitError:kThemeableBrowserEmitCodeLoadFail
@@ -1079,19 +1141,22 @@
 {
     CGFloat screenWidth = CGRectGetWidth(self.view.frame);
     CGFloat toolbarHeight = self.toolbar.frame.size.height;
+    CGFloat toolbarPadding = _browserOptions.fullscreen ? [self getStatusBarOffset] : 0.0;
     
     // Layout leftButtons and rightButtons from outer to inner.
-    CGFloat left = 0;
+    CGFloat left = self.toolbarPaddingX;
     for (UIButton* button in self.leftButtons) {
         CGSize size = button.frame.size;
-        button.frame = CGRectMake(left, floorf((toolbarHeight - size.height) / 2), size.width, size.height);
+        CGFloat yOffset = floorf((toolbarHeight + (toolbarPadding/2) - size.height) / 2);
+        button.frame = CGRectMake(left, yOffset, size.width, size.height);
         left += size.width;
     }
     
-    CGFloat right = 0;
+    CGFloat right = self.toolbarPaddingX;
     for (UIButton* button in self.rightButtons) {
         CGSize size = button.frame.size;
-        button.frame = CGRectMake(screenWidth - right - size.width, floorf((toolbarHeight - size.height) / 2), size.width, size.height);
+        CGFloat yOffset = floorf((toolbarHeight + (toolbarPadding/2) - size.height) / 2);
+        button.frame = CGRectMake(screenWidth - right - size.width, yOffset, size.width, size.height);
         right += size.width;
     }
 }
@@ -1248,7 +1313,18 @@
 
 - (UIStatusBarStyle)preferredStatusBarStyle
 {
-    return _statusBarStyle;
+    UIStatusBarStyle statusBarStyle = UIStatusBarStyleDefault;
+    if(_browserOptions.statusbar[kThemeableBrowserPropStatusBarStyle]){
+        NSString* style = _browserOptions.statusbar[kThemeableBrowserPropStatusBarStyle];
+        if([style isEqualToString:@"lightcontent"]){
+            statusBarStyle = UIStatusBarStyleLightContent;
+        }else if([style isEqualToString:@"darkcontent"]){
+            if (@available(iOS 13.0, *)) {
+                statusBarStyle = UIStatusBarStyleDarkContent;
+            }
+        }
+    }
+    return statusBarStyle;
 }
 
 - (void)close
@@ -1258,19 +1334,24 @@
     [CDVUserAgentUtil releaseLock:&_userAgentLockToken];
     self.currentURL = nil;
     self.webView.delegate = nil;
-    
-    if ((self.navigationDelegate != nil) && [self.navigationDelegate respondsToSelector:@selector(browserExit)]) {
-        [self.navigationDelegate browserExit];
-    }
+    CDVThemeableBrowser* navigationDelegate = self.navigationDelegate;
     
     // Run later to avoid the "took a long time" log message.
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([self respondsToSelector:@selector(presentingViewController)]) {
-            [[self presentingViewController] dismissViewControllerAnimated:!_browserOptions.disableAnimation completion:nil];
+            [[self presentingViewController] dismissViewControllerAnimated:!_browserOptions.disableAnimation completion:^{
+                [navigationDelegate nilTmpWindow];
+            }];
         } else {
-            [[self parentViewController] dismissViewControllerAnimated:!_browserOptions.disableAnimation completion:nil];
+            [[self parentViewController] dismissViewControllerAnimated:!_browserOptions.disableAnimation completion:^{
+                [navigationDelegate nilTmpWindow];
+            }];
         }
     });
+    
+    if ((self.navigationDelegate != nil) && [self.navigationDelegate respondsToSelector:@selector(browserExit)]) {
+        [self.navigationDelegate browserExit];
+    }
     
 }
 
@@ -1418,18 +1499,49 @@
 }
 
 - (void) rePositionViews {
+    // Webview height is a bug that appear in the plugin for ios >= 11 so we need to keep the previous code that work great for previous versions
     CGFloat toolbarHeight = [self getFloatFromDict:_browserOptions.toolbar withKey:kThemeableBrowserPropHeight withDefault:TOOLBAR_DEF_HEIGHT];
-    CGFloat webviewOffset = _browserOptions.fullscreen ? 0.0 : toolbarHeight;
+    CGFloat statusBarOffset = [self getStatusBarOffset];
+    CGFloat toolbarOffset = _browserOptions.fullscreen ? 0.0 : statusBarOffset;
+    CGFloat toolbarPadding = _browserOptions.fullscreen ? statusBarOffset : 0.0;
     
-    if ([_browserOptions.toolbarposition isEqualToString:kThemeableBrowserToolbarBarPositionTop]) {
-        [self.webView setFrame:CGRectMake(self.webView.frame.origin.x, webviewOffset, self.webView.frame.size.width, self.webView.frame.size.height)];
-        [self.toolbar setFrame:CGRectMake(self.toolbar.frame.origin.x, [self getStatusBarOffset], self.toolbar.frame.size.width, self.toolbar.frame.size.height)];
+    if (@available(iOS 11, *)) {
+        // iOS 11+
+        CGFloat webviewOffset = _browserOptions.fullscreen ? toolbarPadding + toolbarHeight : toolbarHeight + statusBarOffset;
+        CGFloat webviewHeightOffset = _browserOptions.fullscreen ? -(toolbarHeight == statusBarOffset ? statusBarOffset+10 : statusBarOffset+toolbarHeight-statusBarOffset+10) : -(toolbarOffset+toolbarPadding-statusBarOffset+10);
+        
+        if ([_browserOptions.toolbarposition isEqualToString:kThemeableBrowserToolbarBarPositionTop]) {
+            // The webview height calculated did not take the status bar into account. Thus we need to remove status bar height to the webview height.
+            [self.webView setFrame:CGRectMake(self.webView.frame.origin.x, webviewOffset, self.webView.frame.size.width, (self.webView.frame.size.height+webviewHeightOffset))];
+            [self.toolbar setFrame:CGRectMake(self.toolbar.frame.origin.x, toolbarOffset, self.toolbar.frame.size.width, self.toolbar.frame.size.height + toolbarPadding)];
+        }
+        // When positionning the iphone to landscape mode, status bar is hidden. The problem is that we set the webview height just before with removing the status bar height. We need to adjust the phenomen by adding the preview status bar height. We had to add manually 20 (pixel) because in landscape mode, the status bar height is equal to 0.
+        if (statusBarOffset == 0) {
+            [self.webView setFrame:CGRectMake(self.webView.frame.origin.x, webviewOffset, self.webView.frame.size.width, (self.webView.frame.size.height+20))];
+        }
+        
+    } else {
+        // iOS <=10
+        CGFloat webviewOffset = _browserOptions.fullscreen ? toolbarPadding + toolbarHeight - statusBarOffset: toolbarHeight;
+        CGFloat webviewHeightOffset = _browserOptions.fullscreen ? -(toolbarOffset+toolbarHeight) : 0;
+        if ([_browserOptions.toolbarposition isEqualToString:kThemeableBrowserToolbarBarPositionTop]) {
+            [self.webView setFrame:CGRectMake(self.webView.frame.origin.x, webviewOffset, self.webView.frame.size.width, self.webView.frame.size.height+webviewHeightOffset)];
+            [self.toolbar setFrame:CGRectMake(self.toolbar.frame.origin.x, toolbarOffset, self.toolbar.frame.size.width, self.toolbar.frame.size.height+toolbarPadding)];
+        }
     }
     
-    CGFloat screenWidth = CGRectGetWidth(self.view.frame);
-    NSInteger width = floorf(screenWidth - self.titleOffset * 2.0f);
     if (self.titleLabel) {
-        self.titleLabel.frame = CGRectMake(floorf((screenWidth - width) / 2.0f), 0, width, toolbarHeight);
+        CGFloat screenWidth = CGRectGetWidth(self.view.frame);
+        NSInteger width = floorf(screenWidth - (self.titleOffsetLeft + self.titleOffsetRight));
+        CGFloat leftOffset;
+        if(self.titleOffsetLeft > 0 && self.titleOffsetRight > 0){
+            leftOffset = floorf((screenWidth - width) / 2.0f);
+        }else if(self.titleOffsetLeft > 0){
+            leftOffset = self.titleOffsetLeft;
+        }else{
+            leftOffset = self.toolbarPaddingX;
+        }
+        self.titleLabel.frame = CGRectMake(leftOffset, toolbarPadding/2, width, toolbarHeight+(toolbarPadding/2));
     }
     
     [self layoutButtons];
@@ -1724,6 +1836,5 @@
     
     return YES;
 }
-
 
 @end
