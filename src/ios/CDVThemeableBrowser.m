@@ -1,9 +1,4 @@
 /*
-
- FIX regel 1495 t/m 1499
-
-*/
-/*
  Licensed to the Apache Software Foundation (ASF) under one
  or more contributor license agreements.  See the NOTICE file
  distributed with this work for additional information
@@ -373,50 +368,32 @@
         }
     });
 }
-/*
-- (void)hide:(CDVInvokedUrlCommand*)command
-{
-    if (self.themeableBrowserViewController == nil) {
-		
-		[self emitWarning:kThemeableBrowserEmitCodeUnexpected
-              withMessage:@"Tried to hide IAB after it was closed."];
-        return;
-
-
-    }
-    if (_isShown == NO) {
-		[self emitWarning:kThemeableBrowserEmitCodeUnexpected
-              withMessage:@"Tried to hide IAB while already hidden"];        
-        return;
-    }
-
-    // Run later to avoid the "took a long time" log message.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.themeableBrowserViewController != nil) {
-            _isShown = NO;
-            [self.themeableBrowserViewController.presentingViewController dismissViewControllerAnimated:YES completion:nil];
-        }
-    });
-}*/
 
 - (void)hide:(CDVInvokedUrlCommand*)command
 {
-    /*
     if (self.themeableBrowserViewController == nil) {
         NSLog(@"Tried to hide IAB after it was closed.");
         return;
     }
-    if (_previousStatusBarStyle == -1) {
+
+    /*if (_previousStatusBarStyle == -1) {
         NSLog(@"Tried to hide IAB while already hidden");
         return;
-    }
-    */
+    }*/
 
-    if (self.themeableBrowserViewController != nil) {
-        [[self.themeableBrowserViewController presentingViewController] dismissViewControllerAnimated:YES completion:nil];
-        _isShown = NO;
-        /*_previousStatusBarStyle = -1;*/
-    }
+    //_previousStatusBarStyle = [UIApplication sharedApplication].statusBarStyle;
+    
+    _isShown = NO;
+    
+    // Run later to avoid the "took a long time" log message.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.themeableBrowserViewController != nil) {
+            //_previousStatusBarStyle = -1;
+            [self.themeableBrowserViewController.presentingViewController dismissViewControllerAnimated:YES completion:^{
+                [[[[UIApplication sharedApplication] delegate] window] makeKeyAndVisible];
+            }];
+        }
+    });
 }
 
 - (void)openInCordovaWebView:(NSURL*)url withOptions:(NSString*)options
@@ -447,7 +424,7 @@
 
 -(void)createIframeBridge
 {
-    if (!_injectedIframeBridge) {
+    //if (!_injectedIframeBridge) {
         _injectedIframeBridge = YES;
         // Create an iframe bridge in the new document to communicate with the CDVThemeableBrowserViewController
         NSString* jsIframeBridge = @"var e = _cdvIframeBridge = d.createElement('iframe');e.style.display='none';d.body.appendChild(e);";
@@ -455,7 +432,7 @@
         NSString* jspostMessageApi = @"window.webkit={messageHandlers:{cordova_iab:{postMessage:function(message){_cdvIframeBridge.src='gap-iab://message/'+encodeURIComponent(message);}}}}";
         // Inject the JS to the webview
         [self.themeableBrowserViewController.webView stringByEvaluatingJavaScriptFromString:[NSString stringWithFormat:@"(function(d){%@%@})(document)", jsIframeBridge, jspostMessageApi]];
-    }
+    //}
 }
 
 // This is a helper method for the inject{Script|Style}{Code|File} API calls, which
@@ -1541,7 +1518,7 @@
         }else{
             leftOffset = self.toolbarPaddingX;
         }
-        self.titleLabel.frame = CGRectMake(leftOffset, toolbarPadding/2, width, toolbarHeight+(toolbarPadding/2));
+        self.titleLabel.frame = CGRectMake(leftOffset/2, toolbarPadding/2, width, toolbarHeight+(toolbarPadding/2));
     }
     
     [self layoutButtons];
